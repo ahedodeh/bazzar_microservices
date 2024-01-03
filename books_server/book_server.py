@@ -1,4 +1,5 @@
 # Import necessary modules
+import os
 from flask import Flask, render_template, request, redirect, url_for, make_response, jsonify
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy.orm import DeclarativeBase, relationship
@@ -7,22 +8,30 @@ from sqlalchemy.orm import Mapped, mapped_column
 from datetime import datetime
 
 # Define a base class for SQLAlchemy models
+
+
 class Base(DeclarativeBase):
     pass
+
 
 # Create a Flask web application
 app = Flask(__name__)
 
 # Configure SQLAlchemy to use SQLite and set the database URI
 db = SQLAlchemy(model_class=Base)
-app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:////data/project.db"
+app.config["SQLALCHEMY_DATABASE_URI"] = 'sqlite:///' + \
+    os.path.join(os.getcwd(), 'project.db')
+
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 db.init_app(app)
 
 # Define SQLAlchemy models for Catalog and Book
+
+
 class Catalog(db.Model):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String)
+
 
 class Book(db.Model):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -32,16 +41,21 @@ class Book(db.Model):
     catalog_id: Mapped[int] = mapped_column(ForeignKey(Catalog.id))
     catalog: Mapped[Catalog] = relationship(Catalog)
 
+
 # Create database tables
 with app.app_context():
     db.create_all()
 
 # Function to log messages to a file
+
+
 def log(message):
     with open('./catalog_log.txt', 'a') as logger:
         logger.write(f'{message}\n')
 
 # Endpoint to get all catalogs
+
+
 @app.get('/catalogs')
 def get_all_catalogs():
     """
@@ -57,10 +71,13 @@ def get_all_catalogs():
     - GET request: /catalogs
     """
     try:
-        catalogs = db.session.execute(db.select(Catalog).order_by(Catalog.id)).scalars()
-        catalogs_list = [{'id': catalog.id, 'name': catalog.name} for catalog in catalogs]
+        catalogs = db.session.execute(
+            db.select(Catalog).order_by(Catalog.id)).scalars()
+        catalogs_list = [{'id': catalog.id, 'name': catalog.name}
+                         for catalog in catalogs]
 
-        log(f'make GET request on /catalogs > get all catalogs {datetime.now()}')
+        log(f'make GET request on /catalogs > get all catalogs {
+            datetime.now()}')
         return jsonify({
             'catalogs': catalogs_list
         })
@@ -72,6 +89,8 @@ def get_all_catalogs():
         return make_response(json_response, 500)
 
 # Endpoint to create a new catalog
+
+
 @app.post('/catalogs')
 def create_catalog():
     """
@@ -109,6 +128,8 @@ def create_catalog():
     })
 
 # Endpoint to get all books
+
+
 @app.get('/books')
 def get_all_books():
     """
@@ -125,7 +146,8 @@ def get_all_books():
     """
     try:
         books = db.session.execute(db.select(Book).order_by(Book.id)).scalars()
-        books_list = [{'id': book.id, 'name': book.name, 'count': book.count, 'price': book.price} for book in books]
+        books_list = [{'id': book.id, 'name': book.name,
+                       'count': book.count, 'price': book.price} for book in books]
         return jsonify({
             'books': books_list
         })
@@ -137,6 +159,8 @@ def get_all_books():
         return make_response(json_response, 500)
 
 # Endpoint to create a new book
+
+
 @app.post('/books')
 def create_book():
     """
@@ -179,6 +203,8 @@ def create_book():
     })
 
 # Endpoint to search for books by name
+
+
 @app.get('/books/search/<string:name>')
 def search_books(name):
     """
@@ -194,12 +220,15 @@ def search_books(name):
     - GET request: /books/search/New Book
     """
     books = db.session.execute(db.select(Book).filter_by(name=name)).scalars()
-    books_list = [{'name': book.name, 'price': book.price, 'id': book.id} for book in books]
+    books_list = [{'name': book.name, 'price': book.price, 'id': book.id}
+                  for book in books]
     return jsonify({
         'books': books_list
     })
 
 # Endpoint to get books by name using a search string
+
+
 @app.get('/books/find')
 def get_book_by_name():
     """
@@ -215,7 +244,8 @@ def get_book_by_name():
     - GET request: /books/find?name=New
     """
     search_string = request.args.get('name', '')
-    books = db.session.query(Book).filter(or_(Book.name.like(f"%{search_string}%"))).all()
+    books = db.session.query(Book).filter(
+        or_(Book.name.like(f"%{search_string}%"))).all()
 
     book_info = [{
         'id': book.id,
@@ -227,6 +257,8 @@ def get_book_by_name():
     })
 
 # Endpoint to get information about a specific book by ID
+
+
 @app.get('/books/<int:id>')
 def get_book(id):
     """
@@ -259,6 +291,8 @@ def get_book(id):
         return make_response(json_response, 404)
 
 # Endpoint to increase the stock count of a book by ID
+
+
 @app.put('/books/<int:id>/count/increase')
 def increase_book_stock(id):
     """
@@ -289,6 +323,8 @@ def increase_book_stock(id):
         return make_response(json_response, 404)
 
 # Endpoint to decrease the stock count of a book by ID
+
+
 @app.put('/books/<int:id>/count/decrease')
 def decrease_book_stock(id):
     """
@@ -319,6 +355,8 @@ def decrease_book_stock(id):
         return make_response(json_response, 404)
 
 # Endpoint to update the price of a book by ID
+
+
 @app.put('/books/<int:id>/price')
 def update_book_price(id):
     """
@@ -352,6 +390,8 @@ def update_book_price(id):
         return make_response(json_response, 404)
 
 # Endpoint to check stock availability of a book by ID
+
+
 @app.get('/books/<int:id>/stock/availability')
 def stock_availability(id):
     """
@@ -378,6 +418,7 @@ def stock_availability(id):
         'success': True,
         'left': book.count
     })
+
 
 # Run the Flask application on host 0.0.0.0 and port 4000 in debug mode
 if __name__ == '__main__':
