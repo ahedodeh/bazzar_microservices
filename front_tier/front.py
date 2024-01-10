@@ -2,31 +2,33 @@ from flask import Flask, request, jsonify
 import requests
 from cachetools import LRUCache
 from flask_socketio import SocketIO
-
+import time
 app = Flask(__name__)
-
 socketio = SocketIO(app)
 
 cache = LRUCache(maxsize=1000)
 
-CATALOG_SERVER_IPS = ["http://127.0.0.1:4000", "http://192.168.2.105:4000"]
-ORDER_SERVER_URLS = ["http://127.0.0.1:5000", "http://192.168.2.105:5000"]
+CATALOG_SERVER_IPS = ["http://127.0.0.1:4000", "http://192.168.2.108:4000"]
+ORDER_SERVER_URLS = ["http://127.0.0.1:5000", "http://192.168.2.108:5000"]
 
-server_index = 0
+server_indices = {
+    'search': 0,
+    'info': 0,
+    'purchase': 0
+}
 
+def get_server_index(request_type):
+    index = server_indices[request_type]
+    server_indices[request_type] = (index + 1) % len(CATALOG_SERVER_IPS)
+    return index
 
-# Function to switch to the next server
-def switch_server():
-    global server_index
-    server_index = (server_index + 1) % len(CATALOG_SERVER_IPS)
-
-
-def get_data_from_cache_or_server(key, server_urls, endpoint):
+def get_data_from_cache_or_server(key, server_urls, endpoint, request_type):
     cached_data = cache.get(key)
     if cached_data:
         app.logger.info(f"Data retrieved from cache for key: {key}")
         return cached_data
     else:
+        server_index = get_server_index(request_type)
         server_url = server_urls[server_index]
         response = requests.get(f"{server_url}/{endpoint}")
         if response.status_code == 200:
@@ -40,20 +42,66 @@ def get_data_from_cache_or_server(key, server_urls, endpoint):
 
 def invalidate_cache(key):
     app.logger.info(f"Invalidating cache for key: {key}")
-    cache.pop(key, None)
+    if key in cache:
+        cache.pop(key)
+        app.logger.info(f"Cache invalidated successfully for key: {key}")
+    else:
+        app.logger.warning(
+            f"Key not found in the cache for invalidation: {key}")
+
+
+# Socket.io event handler for cache invalidation
+@socketio.on('cache_invalidate')
+def handle_cache_invalidate(message):
+    key = message.get('key')
+    invalidate_cache(key)
+    app.logger.info(f"Cache invalidated for key: {key}")
+
+# Socket.io event handler for handling catalog change
+@socketio.on('catalog_change')
+def handle_catalog_change(message):
+    catalog_info = message.get('catalog_info')
+    if catalog_info:
+        key = catalog_info.get('id')
+        if key:
+            invalidate_cache(key)
+            socketio.emit('cache_invalidate', {'key': key})
+            app.logger.info(f"Received catalog change: {catalog_info}")
+        else:
+            app.logger.warning("No key found in catalog_info")
+    else:
+        app.logger.warning("No catalog_info found in message")
+
+
+
+# Socket.io event handler for order confirmation
+@socketio.on('order_confirmation')
+def handle_order_confirmation(message):
+    order_info = message.get('order_info')
+    if order_info:
+        book_info = order_info.get('book_info')
+        if book_info:
+            book_id = book_info.get('id')
+            if book_id:
+                cache[book_id] = book_info
+                app.logger.info(f"Cache updated for book ID {book_id}")
 
 # Endpoint for searching items in the catalog based on item type
-
-
 @app.route('/search/<string:item_type>', methods=['GET'])
 def search(item_type):
     try:
         server_urls = CATALOG_SERVER_IPS
+        
+        start_time = time.time()
+
         data = get_data_from_cache_or_server(
-            item_type, server_urls, f"books/search/{item_type}")
-        # Added: Print server IP with each request
-        print(f"Request to Catalog Server ({server_urls[server_index]})")
-        switch_server()  # Switch to the next server for the next request
+            item_type, server_urls, f"books/search/{item_type}", 'search')
+        
+        end_time = time.time()
+        response_time = end_time - start_time
+        print(f"Request to Catalog Server ({
+              server_urls[get_server_index('search')]})")
+        print(f"Request processing time: {response_time} seconds")
         return jsonify(data)
     except Exception as e:
         app.logger.error(f"Exception: {str(e)}")
@@ -66,11 +114,20 @@ def search(item_type):
 def info(item_number):
     try:
         server_urls = CATALOG_SERVER_IPS
+        start_time = time.time()
+
         data = get_data_from_cache_or_server(
-            item_number, server_urls, f"books/{item_number}")
-        # Added: Print server IP with each request
-        print(f"Request to Catalog Server ({server_urls[server_index]})")
-        switch_server()  # Switch to the next server for the next request
+            item_number, server_urls, f"books/{item_number}", 'info')
+        
+        end_time = time.time()
+        response_time = end_time - start_time
+        print(f"Request to Catalog Server ({
+              server_urls[get_server_index('info')]})")
+        print(f"Request processing time: {response_time} seconds")
+
+        # Emit a socket.io event for cache invalidation
+        socketio.emit('cache_invalidate', {'key': item_number})
+
         return jsonify(data)
     except Exception as e:
         app.logger.error(f"Exception: {str(e)}")
@@ -83,28 +140,32 @@ def info(item_number):
 def purchase(item_id):
     try:
         server_urls = ORDER_SERVER_URLS
+        server_index = get_server_index('purchase')
         server_url = server_urls[server_index]
+
+        start_time = time.time()
+
         response = requests.post(f"{server_url}/purchase/{item_id}")
         data = response.json()
+        end_time = time.time()
+        response_time = end_time - start_time
+        print(f"Request processing time: {response_time} seconds")
 
         if response.status_code == 200:
             # Invalidate the cache for the purchased item
             invalidate_cache(item_id)
             # Emit a notification about the update
             socketio.emit('cache_invalidate', {'key': item_id})
+            print("Order server made a change")
 
         app.logger.info(f"Response from order server {server_url}: {data}")
-        # Added: Print server IP with each request
         print(f"Request to Order Server ({server_url})")
-        switch_server()  # Switch to the next server for the next request
         return jsonify(data)
     except Exception as e:
         app.logger.error(f"Exception: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 # Endpoint to get all cached data
-
-
 @app.route('/cached_data', methods=['GET'])
 def get_cached_data():
     try:
@@ -115,14 +176,6 @@ def get_cached_data():
         app.logger.error(f"Exception: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
-# Socket.io event handler for cache invalidation
-
-
-@socketio.on('cache_invalidate')
-def handle_cache_invalidate(message):
-    key = message.get('key')
-    invalidate_cache(key)
-    app.logger.info(f"Cache invalidated for key: {key}")
 
 
 # Run the Flask application on host 0.0.0.0 and port 3000 in debug mode
