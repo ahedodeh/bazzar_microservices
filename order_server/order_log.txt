@@ -67,3 +67,4 @@ user purchased book test_1 at 2024-01-10 19:05:31.427549, in stock left 99
 user purchased book test_1 at 2024-01-10 19:05:57.350711, in stock left 98
 user purchased book test_1 at 2024-01-10 19:06:11.868931, in stock left 96
 user purchased book test_1 at 2024-01-10 19:18:33.218183, in stock left 95
+user purchased book test_2 at 2024-01-11 20:44:19.801385, in stock left 81

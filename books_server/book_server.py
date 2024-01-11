@@ -1,17 +1,18 @@
 # Import necessary modules
 import os
-from flask import Flask, request, make_response, jsonify
+from flask import Flask, render_template, request, redirect, url_for, make_response, jsonify
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy.orm import DeclarativeBase, relationship
 from sqlalchemy import Float, Integer, String, ForeignKey, or_
 from sqlalchemy.orm import Mapped, mapped_column
 from datetime import datetime
 from flask_socketio import SocketIO
-from flask_socketio import emit
+
 
 # Define a base class for SQLAlchemy models
 class Base(DeclarativeBase):
     pass
+
 
 # Create a Flask web application
 app = Flask(__name__)
@@ -20,7 +21,7 @@ socketio = SocketIO(app)
 # Configure SQLAlchemy to use SQLite and set the database URI
 db = SQLAlchemy(model_class=Base)
 app.config["SQLALCHEMY_DATABASE_URI"] = 'sqlite:///' + \
-os.path.join(os.getcwd(), 'project.db')
+    os.path.join(os.getcwd(), 'project.db')
 
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 db.init_app(app)
@@ -46,12 +47,15 @@ class Book(db.Model):
 with app.app_context():
     db.create_all()
 
+
 # Function to log messages to a file
 def log(message):
     with open('./catalog_log.txt', 'a') as logger:
         logger.write(f'{message}\n')
 
 # Endpoint to get all catalogs
+
+
 @app.get('/catalogs')
 def get_all_catalogs():
     try:
@@ -225,28 +229,28 @@ def increase_book_stock(id):
 # Endpoint to decrease the stock count of a book by ID
 
 
-# Endpoint to decrease the stock count of a book by ID
-@app.route('/books/<int:id>/count/decrease', methods=['PUT'])
+@app.put('/books/<int:id>/count/decrease')
 def decrease_book_stock(id):
     try:
         book = Book.query.filter_by(id=id).first()
         book.count = book.count - 1
         db.session.commit()
-
         socketio.emit('catalog_change', {'catalog_info': {
             'id': book.id,
             'name': book.name,
             'count': book.count
         }})
-        app.logger.info(f"Emitted catalog_change event for book ID {book.id}")
+        app.logger.info(
+            f"Emitted catalog_change event for book ID {book.id}")
 
         return jsonify({
             'count': book.count,
         })
     except Exception as e:
         json_response = jsonify({
-            'error': str(e)
+            'error': e.__str__()
         })
+
         return make_response(json_response, 404)
 
 # Endpoint to update the price of a book by ID
@@ -260,7 +264,7 @@ def update_book_price(id):
         book = Book.query.filter_by(id=id).first()
         book.price = price
         db.session.commit()
-       
+
         return jsonify({
             'price': book.price,
         })
@@ -269,9 +273,11 @@ def update_book_price(id):
             'error': e.__str__()
         })
 
-    return make_response(json_response, 404)
+        return make_response(json_response, 404)
 
 # Endpoint to check stock availability of a book by ID
+
+
 @app.get('/books/<int:id>/stock/availability')
 def stock_availability(id):
     book = Book.query.filter_by(id=id).first()
@@ -286,6 +292,21 @@ def stock_availability(id):
         'success': True,
         'left': book.count
     })
+
+
+# Socket.io event handler for handling catalog change
+@socketio.on('catalog_change_replica')
+def handle_catalog_change(message):
+    catalog_info = message.get('catalog_info')
+    if catalog_info:
+        key = catalog_info.get('id')
+        if key:
+            app.logger.info(f"Received catalog change: {catalog_info}")
+        else:
+            app.logger.warning("No key found in catalog_info")
+    else:
+        app.logger.warning("No catalog_info found in message")
+
 
 # Run the Flask application with SocketIO on host 0.0.0.0 and port 4000 in debug mode
 if __name__ == '__main__':

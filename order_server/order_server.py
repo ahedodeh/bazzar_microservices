@@ -39,7 +39,7 @@ class Order(db.Model):
 with app.app_context():
     db.create_all()
 
-CATALOG_SERVER_IPS = ["http://127.0.0.1:4000", "http://192.168.2.108:4000"]
+CATALOG_SERVER_IPS = ["http://127.0.0.1:4000"]
 catalog_indices = {'purchase': 0}
 
 # Function to get the current catalog server index for a given action

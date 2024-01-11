@@ -8,8 +8,8 @@ socketio = SocketIO(app)
 
 cache = LRUCache(maxsize=1000)
 
-CATALOG_SERVER_IPS = ["http://127.0.0.1:4000", "http://192.168.2.108:4000"]
-ORDER_SERVER_URLS = ["http://127.0.0.1:5000", "http://192.168.2.108:5000"]
+CATALOG_SERVER_IPS = ["http://127.0.0.1:4000"]
+ORDER_SERVER_URLS = ["http://127.0.0.1:3000"]
 
 server_indices = {
     'search': 0,
@@ -180,4 +180,4 @@ def get_cached_data():
 
 # Run the Flask application on host 0.0.0.0 and port 3000 in debug mode
 if __name__ == '__main__':
-    socketio.run(app, host='0.0.0.0', port=3000, debug=True)
+    socketio.run(app, host='0.0.0.0', port=5000, debug=True)

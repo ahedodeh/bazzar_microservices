@@ -1,7 +1,7 @@
 import requests
 
 # Define the base URLs for the front_tier servers
-FRONT_TIER_SERVERS = ["http://127.0.0.1:3000", "http://192.168.2.108:3000"]
+FRONT_TIER_SERVERS = ["http://127.0.0.1:5000", "http://192.168.2.108:5001"]
 server_requests = [0] * len(FRONT_TIER_SERVERS)
 
 # Function to switch to the next server using round-robin algorithm
