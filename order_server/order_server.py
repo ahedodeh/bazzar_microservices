@@ -1,3 +1,4 @@
+# original.py
 from datetime import datetime
 from flask import Flask, make_response, jsonify
 from flask_sqlalchemy import SQLAlchemy
@@ -6,7 +7,6 @@ from sqlalchemy import Integer, JSON, DATETIME
 from sqlalchemy.orm import Mapped, mapped_column
 import requests
 from flask_socketio import SocketIO
-
 
 # Define a base class for SQLAlchemy models
 
@@ -39,16 +39,20 @@ class Order(db.Model):
 with app.app_context():
     db.create_all()
 
-CATALOG_SERVER_IPS = ["http://127.0.0.1:4000"]
-catalog_indices = {'purchase': 0}
+server_url = "http://127.0.0.1:4000"
 
-# Function to get the current catalog server index for a given action
+# SocketIO event handler for handling order confirmation
 
 
-def get_catalog_index(action):
-    index = catalog_indices[action]
-    catalog_indices[action] = (index + 1) % len(CATALOG_SERVER_IPS)
-    return index
+@socketio.on('order_confirmation_original')
+def handle_order_confirmation_original(message):
+    order_info = message.get('order_info')
+    if order_info:
+        # Emit the order confirmation event to the replica
+        socketio.emit('order_confirmation_replica', {'order_info': order_info})
+        print(f"Order confirmation emitted to Replica: {order_info}")
+    else:
+        print("No order_info found in message")
 
 # Endpoint to purchase a book
 
@@ -56,21 +60,17 @@ def get_catalog_index(action):
 @app.route('/purchase/<int:id>', methods=['POST'])
 def purchase_book(id):
     """
-    Purchase a book.
+    Make a purchase request for a specific item.
 
     Input:
-    - Book ID (integer)
+    - item_id: The unique identifier of the item to purchase (integer)
 
     Output:
-    - JSON response confirming the purchase or providing an error message
+    - JSON response confirming the purchase
 
     Example:
-    - POST request: /purchase/1
+    - POST request: /purchase/456
     """
-    action = 'purchase'
-    catalog_index = get_catalog_index(action)
-    server_url = CATALOG_SERVER_IPS[catalog_index]
-    print(f"Request to Catalog Server ({server_url})")
 
     # Check stock availability from the catalog server
     av_response = requests.get(f'{server_url}/books/{id}/stock/availability')
@@ -99,11 +99,14 @@ def purchase_book(id):
                       datetime.now()}, in stock left {decrease_response.json()['count']}\n")
 
         # Emit a notification about the order confirmation
-        socketio.emit('order_confirmation', {'order_info': {
+        socketio.emit('order_confirmation_original', {'order_info': {
             'book_info': book,
             'purchase_date': datetime.now(),
             'count': 1,
         }})
+
+        # Emit a cache invalidation event
+        socketio.emit('cache_invalidate', {'key': id})
 
         # Return a JSON response confirming the order
         json_response = jsonify({
@@ -121,6 +124,9 @@ def purchase_book(id):
         return make_response(json_response, 403)
 
 
-# Run the Flask application on host 0.0.0.0 and port 5000 in debug mode
+
+
+
+# Run the Flask application with SocketIO on host 0.0.0.0 and port 3000 in debug mode
 if __name__ == '__main__':
     socketio.run(app, host='0.0.0.0', port=3000, debug=True)

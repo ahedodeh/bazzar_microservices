@@ -53,11 +53,74 @@ def log(message):
     with open('./catalog_log.txt', 'a') as logger:
         logger.write(f'{message}\n')
 
+# Socket.io event handler for handling catalog change
+@socketio.on('catalog_change')
+def handle_catalog_change(message):
+    catalog_info = message.get('catalog_info')
+    if catalog_info:
+        key = catalog_info.get('id')
+        if key:
+            app.logger.info(f"Received catalog change: {catalog_info}")
+        else:
+            app.logger.warning("No key found in catalog_info")
+    else:
+        app.logger.warning("No catalog_info found in message")
+
+# Socket.io event handler for handling book change
+@socketio.on('book_change')
+def handle_book_change(message):
+    book_info = message.get('book_info')
+    if book_info:
+        key = book_info.get('id')
+        if key:
+            app.logger.info(f"Received book change: {book_info}")
+        else:
+            app.logger.warning("No key found in book_info")
+    else:
+        app.logger.warning("No book_info found in message")
+
+
+# Socket.io event handler for handling catalog change from replica
+
+
+@socketio.on('catalog_change_replica')
+def handle_catalog_change_replica(message):
+    catalog_info = message.get('catalog_info')
+    if catalog_info:
+        # Process the catalog change from the replica
+        print(f"Received catalog change from Replica: {catalog_info}")
+    else:
+        app.logger.warning("No catalog_info found in message")
+
+# Socket.io event handler for handling book change from replica
+
+
+@socketio.on('book_change_replica')
+def handle_book_change_replica(message):
+    book_info = message.get('book_info')
+    if book_info:
+        # Process the book change from the replica
+        print(f"Received book change from Replica: {book_info}")
+    else:
+        app.logger.warning("No book_info found in message")
+
+
+
 # Endpoint to get all catalogs
-
-
 @app.get('/catalogs')
 def get_all_catalogs():
+    """
+    Get a list of all catalogs.
+
+    Input:
+    - None
+
+    Output:
+    - JSON response containing a list of catalogs
+
+    Example:
+    - GET request: /catalogs
+    """
     try:
         catalogs = db.session.execute(
             db.select(Catalog).order_by(Catalog.id)).scalars()
@@ -81,6 +144,18 @@ def get_all_catalogs():
 
 @app.post('/catalogs')
 def create_catalog():
+    """
+    Create a new catalog.
+
+    Input:
+    - Form data with 'name' parameter
+
+    Output:
+    - JSON response confirming the creation of the catalog
+
+    Example:
+    - POST request: /catalogs with form data {'name': 'New Catalog'}
+    """
     try:
         name = request.form['name']
     except:
@@ -97,6 +172,11 @@ def create_catalog():
     db.session.commit()
 
     log(f'make POST request on /catalogs > add new catalog {datetime.now()}')
+
+    # Emit an event to the replica server
+    socketio.emit('catalog_change', {'catalog_info': {
+                  'id': catalog.id, 'name': catalog.name}}, namespace='/replica')
+
     return jsonify({
         'success': True,
         'catalog': catalog.name,
@@ -108,6 +188,18 @@ def create_catalog():
 
 @app.get('/books')
 def get_all_books():
+    """
+    Get a list of all books.
+
+    Input:
+    - None
+
+    Output:
+    - JSON response containing a list of books
+
+    Example:
+    - GET request: /books
+    """
     try:
         books = db.session.execute(db.select(Book).order_by(Book.id)).scalars()
         books_list = [{'id': book.id, 'name': book.name,
@@ -127,11 +219,23 @@ def get_all_books():
 
 @app.post('/books')
 def create_book():
+    """
+    Create a new book.
+
+    Input:
+    - Form data with 'name', 'catalog', 'count', and 'price' parameters
+
+    Output:
+    - JSON response confirming the creation of the book
+
+    Example:
+    - POST request: /books with form data {'name': 'New Book', 'catalog': 1, 'count': 10, 'price': 20.5}
+    """
     try:
         name = request.form['name']
-        catalog = request.form['catalog']
+        catalog = int(request.form['catalog'])
         count = int(request.form['count'])
-        price = int(request.form['price'])
+        price = float(request.form['price'])
     except Exception as exc:
         json_response = jsonify({
             'error': exc.__str__()
@@ -148,6 +252,12 @@ def create_book():
     db.session.add(book)
     db.session.commit()
 
+    # Emit an event to the replica server
+    socketio.emit('catalog_change', {'catalog_info': {
+                  'id': catalog, 'name': name}}, namespace='/replica')
+    socketio.emit('book_change', {'book_info': {
+                  'id': book.id, 'name': book.name, 'catalog': book.catalog_id}}, namespace='/replica')
+
     return jsonify({
         'success': True,
         'book': book.name,
@@ -159,6 +269,18 @@ def create_book():
 
 @app.get('/books/search/<string:name>')
 def search_books(name):
+    """
+    Search for books by name.
+
+    Input:
+    - Book name (string)
+
+    Output:
+    - JSON response containing a list of matching books
+
+    Example:
+    - GET request: /books/search/New Book
+    """
     books = db.session.execute(db.select(Book).filter_by(name=name)).scalars()
     books_list = [{'name': book.name, 'price': book.price, 'id': book.id}
                   for book in books]
@@ -171,6 +293,18 @@ def search_books(name):
 
 @app.get('/books/find')
 def get_book_by_name():
+    """
+    Get books by name using a search string.
+
+    Input:
+    - Query parameter 'name' (string)
+
+    Output:
+    - JSON response containing a list of matching books
+
+    Example:
+    - GET request: /books/find?name=New
+    """
     search_string = request.args.get('name', '')
     books = db.session.query(Book).filter(
         or_(Book.name.like(f"%{search_string}%"))).all()
@@ -189,6 +323,18 @@ def get_book_by_name():
 
 @app.get('/books/<int:id>')
 def get_book(id):
+    """
+    Get information about a specific book by ID.
+
+    Input:
+    - Book ID (integer)
+
+    Output:
+    - JSON response containing information about the book
+
+    Example:
+    - GET request: /books/1
+    """
     try:
         book = Book.query.filter_by(id=id).first()
         book_info = dict({
@@ -206,15 +352,64 @@ def get_book(id):
 
         return make_response(json_response, 404)
 
+
+
+
+
+# Endpoint to check stock availability of a book by ID
+
+
+@app.get('/books/<int:id>/stock/availability')
+def stock_availability(id):
+    """
+    Check the stock availability of a book by ID.
+
+    Input:
+    - Book ID (integer)
+
+    Output:
+    - JSON response indicating stock availability
+
+    Example:
+    - GET request: /books/1/stock/availability
+    """
+    book = Book.query.filter_by(id=id).first()
+    if book.count == 0:
+        json_response = jsonify({
+            'success': False,
+            'message': 'Out of stock'
+        })
+        return make_response(json_response, 403)
+
+    return jsonify({
+        'success': True,
+        'left': book.count
+    })
+
+
 # Endpoint to increase the stock count of a book by ID
-
-
 @app.put('/books/<int:id>/count/increase')
 def increase_book_stock(id):
+    """
+    Increase the stock count of a book by ID.
+
+    Input:
+    - Book ID (integer)
+
+    Output:
+    - JSON response confirming the increase in stock count
+
+    Example:
+    - PUT request: /books/1/count/increase
+    """
     try:
         book = Book.query.filter_by(id=id).first()
         book.count = book.count + 1
         db.session.commit()
+
+        # Emit an event to the replica server
+        socketio.emit('book_change', {'book_info': {
+                      'id': book.id, 'name': book.name, 'catalog': book.catalog_id}}, namespace='/replica')
 
         return jsonify({
             'count': book.count,
@@ -231,17 +426,26 @@ def increase_book_stock(id):
 
 @app.put('/books/<int:id>/count/decrease')
 def decrease_book_stock(id):
+    """
+    Decrease the stock count of a book by ID.
+
+    Input:
+    - Book ID (integer)
+
+    Output:
+    - JSON response confirming the decrease in stock count
+
+    Example:
+    - PUT request: /books/1/count/decrease
+    """
     try:
         book = Book.query.filter_by(id=id).first()
         book.count = book.count - 1
         db.session.commit()
-        socketio.emit('catalog_change', {'catalog_info': {
-            'id': book.id,
-            'name': book.name,
-            'count': book.count
-        }})
-        app.logger.info(
-            f"Emitted catalog_change event for book ID {book.id}")
+
+        # Emit an event to the replica server
+        socketio.emit('book_change', {'book_info': {
+                      'id': book.id, 'name': book.name, 'catalog': book.catalog_id}}, namespace='/replica')
 
         return jsonify({
             'count': book.count,
@@ -258,12 +462,29 @@ def decrease_book_stock(id):
 
 @app.put('/books/<int:id>/price')
 def update_book_price(id):
+    """
+    Update the price of a book by ID.
+
+    Input:
+    - Book ID (integer)
+    - Form data with 'price' parameter
+
+    Output:
+    - JSON response confirming the update in price
+
+    Example:
+    - PUT request: /books/1/price with form data {'price': 25.5}
+    """
     try:
         price = float(request.form['price'])
 
         book = Book.query.filter_by(id=id).first()
         book.price = price
         db.session.commit()
+
+        # Emit an event to the replica server
+        socketio.emit('book_change', {'book_info': {
+                      'id': book.id, 'name': book.name, 'catalog': book.catalog_id}}, namespace='/replica')
 
         return jsonify({
             'price': book.price,
@@ -274,24 +495,6 @@ def update_book_price(id):
         })
 
         return make_response(json_response, 404)
-
-# Endpoint to check stock availability of a book by ID
-
-
-@app.get('/books/<int:id>/stock/availability')
-def stock_availability(id):
-    book = Book.query.filter_by(id=id).first()
-    if book.count == 0:
-        json_response = jsonify({
-            'success': False,
-            'message': 'Out of stock'
-        })
-        return make_response(json_response, 403)
-
-    return jsonify({
-        'success': True,
-        'left': book.count
-    })
 
 
 # Socket.io event handler for handling catalog change

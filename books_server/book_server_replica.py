@@ -1,5 +1,3 @@
-# replica.py
-
 import os
 from flask import Flask, jsonify, make_response, request
 from flask_sqlalchemy import SQLAlchemy
@@ -7,6 +5,7 @@ from sqlalchemy.orm import relationship, declarative_base
 from sqlalchemy import Float, Integer, String, ForeignKey, or_
 from datetime import datetime
 from flask_socketio import SocketIO
+from book_server import Book
 
 Base = declarative_base()
 
@@ -18,8 +17,8 @@ app_replica.config["SQLALCHEMY_DATABASE_URI"] = 'sqlite:///' + \
     os.path.join(os.getcwd(), 'project_replica.db')
 app_replica.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
-db_replica = SQLAlchemy(model_class=Base)
-db_replica.init_app(app_replica)
+# Initialize SQLAlchemy directly with the Flask app
+db_replica = SQLAlchemy(app_replica, model_class=Base)
 
 
 # Define SQLAlchemy models for Catalog and Book in the replica
@@ -43,12 +42,98 @@ class BookReplica(db_replica.Model):
 with app_replica.app_context():
     db_replica.create_all()
 
-# Function to log messages to a file
 
 
-def log_replica(message):
-    with open('./catalog_log_replica.txt', 'a') as logger:
-        logger.write(f'{message}\n')
+# Define a flag to ensure data copy happens only once
+data_copy_done = False
+
+# Function to copy data from the original to the replica
+
+
+# Function to copy data from the original to the replica
+def copy_data_from_original_to_replica():
+    try:
+        global data_copy_done
+        if not data_copy_done:
+            with app_replica.app_context():
+                # Fetch all books from the original database
+                books_original = Book.query.all()
+
+                # Copy each book to the replica database
+                for book_original in books_original:
+                    book_replica = BookReplica(
+                        id=book_original.id,
+                        name=book_original.name,
+                        count=book_original.count,
+                        price=book_original.price,
+                        catalog_id=book_original.catalog_id
+                    )
+                    # Add and commit the copied book to the replica database
+                    with app_replica.app_context():
+                        db_replica.session.add(book_replica)
+                        db_replica.session.commit()
+
+              
+                data_copy_done = True
+
+        return True
+
+    except Exception as e:
+        return False
+
+
+# Run the data copy function before each request
+
+
+@app_replica.before_request
+def before_request():
+    with app_replica.app_context():
+        copy_data_from_original_to_replica()
+
+
+# Socket.io event handler for handling catalog change in replica
+@socketio_replica.on('catalog_change_replica')
+def handle_catalog_change_replica(message):
+    catalog_info = message.get('catalog_info')
+    if catalog_info:
+        print(f"Received catalog change in Replica: {catalog_info}")
+    else:
+        app_replica.logger.warning("No catalog_info found in message")
+
+# Socket.io event handler for handling book change in replica
+
+
+@socketio_replica.on('book_change_replica')
+def handle_book_change_replica(message):
+    book_info = message.get('book_info')
+    if book_info:
+        print(f"Received book change in Replica: {book_info}")
+    else:
+        app_replica.logger.warning("No book_info found in message")
+
+# Socket.io event handler for handling catalog change in origin
+
+
+@socketio_replica.on('catalog_change')
+def handle_catalog_change_origin(message):
+    catalog_info = message.get('catalog_info')
+    if catalog_info:
+        print(f"Received catalog change from Replica to Origin: {
+              catalog_info}")
+    else:
+        app_replica.logger.warning("No catalog_info found in message")
+
+# Socket.io event handler for handling book change in origin
+
+
+@socketio_replica.on('book_change')
+def handle_book_change_origin(message):
+    book_info = message.get('book_info')
+    if book_info:
+        print(f"Received book change from Replica to Origin: {book_info}")
+    else:
+        app_replica.logger.warning("No book_info found in message")
+
 
 # Endpoint to get all catalogs in the replica
 @app_replica.route('/catalogs')
@@ -79,8 +164,10 @@ def create_catalog_replica():
     db_replica.session.add(catalog_replica)
     db_replica.session.commit()
 
-    log_replica(
-        f'make POST request on /catalogs > add new catalog {datetime.now()}')
+    # Emit a Socket.IO event for catalog change to origin
+    socketio_replica.emit('catalog_change_replica', {'catalog_info': {
+                          'id': catalog_replica.id, 'name': catalog_replica.name}})
+
     return jsonify({
         'success': True,
         'catalog': catalog_replica.name,
@@ -89,23 +176,27 @@ def create_catalog_replica():
 
 
 
-
 # Endpoint to get all books in the replica
 
 
-@app_replica.route('/books')
+@app_replica.route('/books', methods=['GET'])
 def get_all_books_replica():
     try:
-        books = db_replica.session.execute(db_replica.select(
-            BookReplica).order_by(BookReplica.id)).scalars()
-        books_list = [{'id': book.id, 'name': book.name,
-                       'count': book.count, 'price': book.price} for book in books]
-        return jsonify({'books': books_list})
+        books_replica = BookReplica.query.all()
+        books_list_replica = [{'id': book.id, 'name': book.name,
+                               'count': book.count, 'price': book.price} for book in books_replica]
+
+        return jsonify({
+            'books': books_list_replica
+        })
+
     except Exception as e:
-        json_response = jsonify({'error': e.__str__()})
+        json_response = jsonify({
+            'error': e.__str__()
+        })
         return make_response(json_response, 500)
 
-
+ 
 # Endpoint to create a new book in the replica
 @app_replica.route('/books', methods=['POST'])
 def create_book_replica():
@@ -128,11 +219,16 @@ def create_book_replica():
     db_replica.session.add(book_replica)
     db_replica.session.commit()
 
+    # Emit a Socket.IO event for book change to origin
+    socketio_replica.emit('book_change_replica', {'book_info': {
+                          'id': book_replica.id, 'name': book_replica.name, 'count': book_replica.count}})
+
     return jsonify({
         'success': True,
         'book': book_replica.name,
         'book_id': book_replica.id,
     })
+
 
 # Endpoint to search for books by name in the replica
 
@@ -187,15 +283,18 @@ def get_book_replica(id):
 
         return make_response(json_response, 404)
 
+
 # Endpoint to increase the stock count of a book by ID in the replica
-
-
 @app_replica.route('/books/<int:id>/count/increase', methods=['PUT'])
 def increase_book_stock_replica(id):
     try:
         book = BookReplica.query.get(id)
         book.count += 1
         db_replica.session.commit()
+
+        # Emit a Socket.IO event for book change to origin
+        socketio_replica.emit('book_change_replica', {'book_info': {
+                              'id': book.id, 'name': book.name, 'count': book.count}})
 
         return jsonify({
             'count': book.count,
@@ -206,11 +305,6 @@ def increase_book_stock_replica(id):
         })
 
         return make_response(json_response, 404)
-
-# ... (remaining code)
-
-
-
 
 # Endpoint to decrease the stock count of a book by ID in the replica
 
@@ -223,10 +317,11 @@ def decrease_book_stock_replica(id):
             if book.count > 0:
                 book.count -= 1
                 db_replica.session.commit()
-                socketio_replica.emit('catalog_change_replica', {'catalog_info': {
+
+                # Emit a Socket.IO event for book change to origin
+                socketio_replica.emit('book_change_replica', {'book_info': {
                                       'id': book.id, 'name': book.name, 'count': book.count}})
-                app_replica.logger.info(
-                    f"Emitted catalog_change_replica event for book ID {book.id}")
+
                 return jsonify({'count': book.count})
             else:
                 return jsonify({'error': 'Book is already out of stock'}), 403
@@ -236,8 +331,9 @@ def decrease_book_stock_replica(id):
         json_response = jsonify({'error': e.__str__()})
         return make_response(json_response, 500)
 
-
 # Endpoint to update the price of a book by ID in the replica
+
+
 @app_replica.route('/books/<int:id>/price', methods=['PUT'])
 def update_book_price_replica(id):
     try:
@@ -247,8 +343,8 @@ def update_book_price_replica(id):
         book.price = price
         db_replica.session.commit()
 
-        # Emit a Socket.IO event for catalog change in replica
-        socketio_replica.emit('catalog_change_replica', {'catalog_info': {
+        # Emit a Socket.IO event for book change to origin
+        socketio_replica.emit('book_change_replica', {'book_info': {
                               'id': book.id, 'name': book.name, 'count': book.count}})
 
         return jsonify({
@@ -258,7 +354,6 @@ def update_book_price_replica(id):
         json_response = jsonify({
             'error': e.__str__()
         })
-
         return make_response(json_response, 404)
 
 # Endpoint to check stock availability of a book by ID in the replica
@@ -279,17 +374,7 @@ def stock_availability_replica(id):
         'left': book.count
     })
 
-# ... (remaining code)
 
-
-# Socket.io event handler for handling catalog change in Replica
-
-
-@socketio_replica.on('catalog_change')
-def handle_catalog_change_replica(message):
-    catalog_info = message.get('catalog_info')
-    if catalog_info:
-        print(f"Received catalog change in Replica: {catalog_info}")
 
 
 # Run the Flask application with SocketIO on host 0.0.0.0 and port 4001 in debug mode

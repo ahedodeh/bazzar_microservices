@@ -1,3 +1,4 @@
+# order_server_replica.py
 from datetime import datetime
 from flask import Flask, make_response, jsonify, request
 from flask_sqlalchemy import SQLAlchemy
@@ -39,58 +40,33 @@ class OrderReplica(db_replica.Model):
 with app_replica.app_context():
     db_replica.create_all()
 
-# Function to log order information to a file
+catalog_replica_url = "http://127.0.0.1:4001"
 
-
-def log_order(message):
-    with open('./order_replica_log.txt', 'a') as logger:
-        logger.write(f'{message}\n')
-
-# Socket.io event handler for handling order confirmation
+# SocketIO event handler for handling order confirmation in the replica
 
 
 @socketio_replica.on('order_confirmation_replica')
-def handle_order_confirmation(message):
+def handle_order_confirmation_replica(message):
     order_info = message.get('order_info')
     if order_info:
-        log_order(f"Received order confirmation in Replica: {order_info}")
-        # You can add additional logic here if needed
+        # You can process the order confirmation in the replica as needed
+        print(f"Order confirmation received in Replica: {order_info}")
+    else:
+        print("No order_info found in message")
 
-
-# Define catalog server replica IPs
-CATALOG_SERVER_REPLICA_IPS = [
-    "http://127.0.0.1:4001"]
-catalog_indices = {'purchase': 0}
 
 # Function to get the current catalog server replica index for a given action
+catalog_indices = {'purchase': 0}
 
 
-def get_catalog_replica_index(action):
-    index = catalog_indices[action]
-    catalog_indices[action] = (index + 1) % len(CATALOG_SERVER_REPLICA_IPS)
-    return index
+
 
 # Endpoint to purchase a book
 
 
 @app_replica.route('/purchase/<int:id>', methods=['POST'])
 def purchase_book(id):
-    """
-    Purchase a book.
-
-    Input:
-    - Book ID (integer)
-
-    Output:
-    - JSON response confirming the purchase or providing an error message
-
-    Example:
-    - POST request: /purchase/1
-    """
-    action = 'purchase'
-    catalog_replica_index = get_catalog_replica_index(action)
-    catalog_replica_url = CATALOG_SERVER_REPLICA_IPS[catalog_replica_index]
-    print(f"Request to Catalog Server Replica ({catalog_replica_url})")
+   
 
     # Check stock availability from the catalog replica server
     av_response = requests.get(
@@ -115,10 +91,6 @@ def purchase_book(id):
         db_replica.session.add(order_replica)
         db_replica.session.commit()
 
-        # Log the order information
-        log_order(f"user purchased book {book['books']['name']} at {
-                  datetime.now()}, in stock left {decrease_response.json()['count']}")
-
         # Emit a notification about the order confirmation
         socketio_replica.emit('order_confirmation_replica', {'order_info': {
             'book_info': book,
@@ -142,6 +114,6 @@ def purchase_book(id):
         return make_response(json_response, 403)
 
 
-# Run the Flask application with SocketIO on host 0.0.0.0 and port 3000 in debug mode
+# Run the Flask application with SocketIO on host 0.0.0.0 and port 3001 in debug mode
 if __name__ == '__main__':
     socketio_replica.run(app_replica, host='0.0.0.0', port=3001, debug=True)
